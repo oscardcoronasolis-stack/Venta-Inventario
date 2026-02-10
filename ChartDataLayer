@@ -1,0 +1,184 @@
+/**
+ * CAPA DE DATOS PARA GRÁFICAS
+ * Extrae datos específicos para visualización
+ */
+
+/**
+ * Obtiene datos completos para la gráfica de burbujas
+ * Columnas: E (Tienda), J (Tipo), L (Ventas), M (Inventario), P (Tamaño)
+ * @param {Object} filters - Filtros activos (opcional)
+ * @returns {Object} Datos formateados para ECharts
+ */
+function getChartData(filters) {
+  try {
+    const rawData = getAllData();
+    
+    // Normalizar filtros: convertir claves a números
+    const normalizedFilters = {};
+    if (filters && typeof filters === 'object') {
+      Object.keys(filters).forEach(key => {
+        const numKey = parseInt(key);
+        if (!isNaN(numKey) && filters[key] && filters[key] !== 'TODOS') {
+          normalizedFilters[numKey] = filters[key];
+        }
+      });
+    }
+    
+    const filteredData = Object.keys(normalizedFilters).length > 0 
+      ? filterData(rawData.data, normalizedFilters)
+      : rawData.data;
+    
+    Logger.log('Filtros recibidos: ' + JSON.stringify(filters));
+    Logger.log('Filtros normalizados: ' + JSON.stringify(normalizedFilters));
+    Logger.log('Total filas antes de filtrar: ' + rawData.data.length);
+    Logger.log('Total filas después de filtrar: ' + filteredData.length);
+    
+    return processChartData(filteredData);
+  } catch (error) {
+    Logger.log('Error en getChartData: ' + error.toString());
+    return { error: error.message };
+  }
+}
+
+/**
+ * Procesa datos brutos y los convierte al formato ECharts
+ * @param {Array[]} data - Datos filtrados
+ * @returns {Object} { dataLocal: [], dataForanea: [], stats: {} }
+ */
+function processChartData(data) {
+  const dataLocal = [];
+  const dataForanea = [];
+  
+  // Índices de columnas (base 0)
+  const COL_E = 4;  // Nombre tienda
+  const COL_J = 9;  // Tipo (Local/Foranea)
+  const COL_L = 11; // Ventas
+  const COL_M = 12; // Inventario
+  const COL_P = 15; // Tamaño (%)
+  
+  let skippedRows = 0;
+  
+  data.forEach((row, index) => {
+    const tienda = row[COL_E] || 'Sin nombre';
+    const tipo = String(row[COL_J] || '').trim();
+    const ventas = parseChartNumber(row[COL_L]);
+    const inventario = parseChartNumber(row[COL_M]);
+    const tamanio = parseChartPercentage(row[COL_P]);
+    
+    // Debug de primera fila
+    if (index === 0) {
+      Logger.log('Primera fila ejemplo:');
+      Logger.log('  Tienda (E): ' + tienda);
+      Logger.log('  Tipo (J): "' + tipo + '"');
+      Logger.log('  Ventas (L): ' + row[COL_L] + ' → ' + ventas);
+      Logger.log('  Inventario (M): ' + row[COL_M] + ' → ' + inventario);
+      Logger.log('  Tamaño (P): ' + row[COL_P] + ' → ' + tamanio);
+    }
+    
+    // Validar datos
+    if (ventas === null || inventario === null || tamanio === null) {
+      skippedRows++;
+      return;
+    }
+    
+    const point = [
+      ventas,      // [0] Eje X
+      inventario,  // [1] Eje Y
+      tamanio,     // [2] Tamaño burbuja
+      tienda,      // [3] Nombre
+      tipo         // [4] Tipo
+    ];
+    
+    // Clasificar por tipo (case-insensitive)
+    const tipoLower = tipo.toLowerCase();
+    if (tipoLower === 'local') {
+      dataLocal.push(point);
+    } else if (tipoLower === 'foranea' || tipoLower === 'foránea') {
+      dataForanea.push(point);
+    } else {
+      Logger.log('Tipo no reconocido en fila ' + index + ': "' + tipo + '"');
+    }
+  });
+  
+  Logger.log('Procesamiento completado:');
+  Logger.log('  Total Local: ' + dataLocal.length);
+  Logger.log('  Total Foránea: ' + dataForanea.length);
+  Logger.log('  Filas saltadas (datos inválidos): ' + skippedRows);
+  
+  return {
+    dataLocal: dataLocal,
+    dataForanea: dataForanea,
+    stats: calculateChartStats(dataLocal, dataForanea)
+  };
+}
+
+/**
+ * Parsea valores monetarios: "$1,251,314.11" → 1251
+ * @param {*} value - Valor a parsear
+ * @returns {number|null}
+ */
+function parseChartNumber(value) {
+  if (value === null || value === undefined || value === '') return null;
+  
+  // Si ya es número, redondear a miles
+  if (typeof value === 'number') {
+    return Math.round(value / 1000);
+  }
+  
+  // Si es string, limpiar y convertir
+  const cleaned = String(value).replace(/[$,]/g, '');
+  const num = parseFloat(cleaned);
+  
+  return isNaN(num) ? null : Math.round(num / 1000);
+}
+
+/**
+ * Parsea porcentajes: "45.5%" → 45.5 o 0.455 → 45.5
+ * @param {*} value - Valor a parsear
+ * @returns {number|null}
+ */
+function parseChartPercentage(value) {
+  if (value === null || value === undefined || value === '') return null;
+  
+  // Si es string con %
+  if (typeof value === 'string' && value.includes('%')) {
+    const num = parseFloat(value.replace('%', ''));
+    return isNaN(num) ? null : num;
+  }
+  
+  // Si es número decimal (0.455 → 45.5)
+  if (typeof value === 'number') {
+    return value < 1 ? value * 100 : value;
+  }
+  
+  const num = parseFloat(value);
+  return isNaN(num) ? null : num;
+}
+
+/**
+ * Calcula estadísticas para la gráfica
+ */
+function calculateChartStats(dataLocal, dataForanea) {
+  const allData = [...dataLocal, ...dataForanea];
+  
+  if (allData.length === 0) {
+    return {
+      totalTiendas: 0,
+      totalLocal: 0,
+      totalForanea: 0,
+      promedioVentas: 0,
+      promedioInventario: 0
+    };
+  }
+  
+  const ventas = allData.map(d => d[0]);
+  const inventarios = allData.map(d => d[1]);
+  
+  return {
+    totalTiendas: allData.length,
+    totalLocal: dataLocal.length,
+    totalForanea: dataForanea.length,
+    promedioVentas: Math.round(ventas.reduce((a, b) => a + b, 0) / ventas.length),
+    promedioInventario: Math.round(inventarios.reduce((a, b) => a + b, 0) / inventarios.length)
+  };
+}
