@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <base target="_top">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/echarts/5.4.3/echarts.min.js"></script>
+  <!-- Iconos -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <?!= include('Styles'); ?>
+</head>
+<body>
+  
+  <!-- Header Compacto Fijo -->
+  <header class="executive-header">
+    <div class="header-content">
+      <div class="brand">
+        <i class="fas fa-chart-line brand-icon"></i>
+        <div class="brand-text">
+          <h1>Inventario IA</h1>
+          <span class="tagline">Analytics Dashboard</span>
+        </div>
+      </div>
+      <div class="header-actions">
+        <button class="btn-icon" id="btnRefresh" title="Actualizar datos">
+          <i class="fas fa-sync-alt"></i>
+        </button>
+        <button class="btn-icon" id="btnToggleFilters" title="Filtros">
+          <i class="fas fa-filter"></i>
+        </button>
+        <button class="btn-icon" id="btnScrollToSankey" title="Ir a Rebalanceo">
+          <i class="fas fa-arrow-down"></i>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- Panel de Filtros Lateral Deslizable -->
+  <aside class="filters-sidebar" id="filtersSidebar">
+    <div class="filters-header">
+      <h2><i class="fas fa-sliders-h"></i> Filtros</h2>
+      <button class="btn-clear-all" id="btnClearAll">
+        <i class="fas fa-times-circle"></i> Limpiar todo
+      </button>
+    </div>
+
+    <!-- Chips de Filtros Activos -->
+    <div class="active-filters" id="activeFiltersChips"></div>
+
+    <!-- Contenedor de Filtros -->
+    <div class="filters-container" id="filtersContainer">
+      <div class="filter-skeleton">
+        <i class="fas fa-spinner fa-pulse"></i> Cargando filtros...
+      </div>
+    </div>
+
+    <!-- Botón Cerrar Filtros (Mobile) -->
+    <div class="filters-footer">
+      <button class="btn-secondary btn-block" id="btnCloseFilters">
+        <i class="fas fa-times"></i> Cerrar
+      </button>
+    </div>
+  </aside>
+
+  <!-- Overlay para cerrar filtros en mobile -->
+  <div class="sidebar-overlay" id="sidebarOverlay"></div>
+
+  <!-- Contenedor Principal - Storytelling Vertical -->
+  <main class="storytelling-container">
+    
+    <!-- SECCIÓN 1: DIAGNÓSTICO - Análisis Ventas vs Inventario -->
+    <section class="story-section" id="section-diagnostico">
+      <div class="section-content">
+        
+        <!-- KPIs Compactos -->
+        <div class="kpi-row-compact">
+          <div class="kpi-card-mini">
+            <div class="kpi-icon-mini" style="background: linear-gradient(135deg, #C9A0DC, #B07CCF);">
+              <i class="fas fa-store"></i>
+            </div>
+            <div class="kpi-content-mini">
+              <span class="kpi-label-mini">Tiendas</span>
+              <span class="kpi-value-mini" id="kpiTiendas">0</span>
+            </div>
+          </div>
+          <div class="kpi-card-mini">
+            <div class="kpi-icon-mini" style="background: linear-gradient(135deg, #F6B48C, #F39A5B);">
+              <i class="fas fa-chart-line"></i>
+            </div>
+            <div class="kpi-content-mini">
+              <span class="kpi-label-mini">Ventas</span>
+              <span class="kpi-value-mini" id="kpiVentas">$0</span>
+            </div>
+          </div>
+          <div class="kpi-card-mini">
+            <div class="kpi-icon-mini" style="background: linear-gradient(135deg, #18C6B8, #15a89a);">
+              <i class="fas fa-boxes"></i>
+            </div>
+            <div class="kpi-content-mini">
+              <span class="kpi-label-mini">Inventario</span>
+              <span class="kpi-value-mini" id="kpiInventario">$0</span>
+            </div>
+          </div>
+          <div class="kpi-card-mini">
+            <div class="kpi-icon-mini" style="background: linear-gradient(135deg, #4A77B5, #3a5f8f);">
+              <i class="fas fa-percentage"></i>
+            </div>
+            <div class="kpi-content-mini">
+              <span class="kpi-label-mini">Ocupación</span>
+              <span class="kpi-value-mini" id="kpiOcupacion">0%</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Gráfica Principal -->
+        <div class="chart-hero">
+          <div class="chart-hero-header">
+            <div class="chart-hero-title">
+              <span class="section-number">01</span>
+              <div>
+                <h2>Diagnóstico: Ventas vs Inventario</h2>
+                <p class="chart-hero-subtitle">Análisis de balance por tipo de tienda</p>
+              </div>
+            </div>
+            <div class="chart-legend-inline">
+              <span class="legend-item-inline">
+                <span class="legend-dot" style="background: linear-gradient(135deg, #C9A0DC, #B07CCF);"></span>
+                Local (<span id="countLocal">0</span>)
+              </span>
+              <span class="legend-item-inline">
+                <span class="legend-dot" style="background: linear-gradient(135deg, #F6B48C, #F39A5B);"></span>
+                Foránea (<span id="countForanea">0</span>)
+              </span>
+            </div>
+          </div>
+          <div id="bubbleChart" class="chart-hero-canvas"></div>
+        </div>
+
+        <!-- Navegación -->
+        <div class="section-nav">
+          <button class="btn-nav-down" id="btnNavToSankey">
+            <span>Ver Rebalanceo</span>
+            <i class="fas fa-chevron-down"></i>
+          </button>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- SECCIÓN 2: ACCIÓN - Flujo de Rebalanceo -->
+    <section class="story-section" id="section-rebalanceo">
+      <div class="section-content">
+
+        <!-- Stats de Rebalanceo -->
+        <div class="sankey-stats-hero">
+          <div class="sankey-stat-hero excedente">
+            <span class="sankey-stat-label-hero">Total Excedente</span>
+            <span class="sankey-stat-value-hero" id="totalExcedente">$0</span>
+          </div>
+          <div class="sankey-stat-hero deficit">
+            <span class="sankey-stat-label-hero">Total Déficit</span>
+            <span class="sankey-stat-value-hero" id="totalDeficit">$0</span>
+          </div>
+          <div class="sankey-stat-hero balance">
+            <span class="sankey-stat-label-hero">Balance</span>
+            <span class="sankey-stat-value-hero" id="balanceRebalanceo">$0</span>
+          </div>
+        </div>
+
+        <!-- Gráfica Sankey -->
+        <div class="chart-hero">
+          <div class="chart-hero-header">
+            <div class="chart-hero-title">
+              <span class="section-number">02</span>
+              <div>
+                <h2>Acción: Flujo de Rebalanceo</h2>
+                <p class="chart-hero-subtitle">Top 10 tiendas con excedente y déficit</p>
+              </div>
+            </div>
+          </div>
+          <div id="sankeyChart" class="chart-hero-canvas"></div>
+        </div>
+
+        <!-- Navegación -->
+        <div class="section-nav">
+          <button class="btn-nav-up" id="btnNavToDiagnostico">
+            <i class="fas fa-chevron-up"></i>
+            <span>Volver a Diagnóstico</span>
+          </button>
+        </div>
+
+      </div>
+    </section>
+
+  </main>
+
+  <?!= include('Script'); ?>
+</body>
+</html>
