@@ -1,0 +1,104 @@
+/**
+ * LÓGICA DE NEGOCIO
+ * Procesamiento y transformación de datos en memoria
+ */
+
+/**
+ * Extrae valores únicos de columnas de filtro (A-K)
+ * @param {Array[]} data - Datos completos
+ * @returns {Object} { columnIndex: [uniqueValues] }
+ */
+function getUniqueFilterValues(data) {
+  const uniqueValues = {};
+  
+  // Para cada columna de filtro (0-10 = A-K)
+  for (let colIdx = 0; colIdx < 11; colIdx++) {
+    const valuesSet = new Set();
+    
+    data.forEach(row => {
+      const value = row[colIdx];
+      if (value !== null && value !== undefined && value !== '') {
+        // Normalizar: trim y convertir a string
+        const normalized = String(value).trim();
+        if (normalized) {
+          valuesSet.add(normalized);
+        }
+      }
+    });
+    
+    uniqueValues[colIdx] = Array.from(valuesSet).sort();
+    
+    // Debug primera columna
+    if (colIdx === 0) {
+      Logger.log('Columna A - Valores únicos encontrados: ' + JSON.stringify(uniqueValues[colIdx]));
+    }
+  }
+  
+  return uniqueValues;
+}
+
+/**
+ * Filtra los datos según criterios dinámicos
+ * @param {Array[]} data - Datos completos
+ * @param {Object} filters - { columnIndex: selectedValue }
+ * @returns {Array[]} Datos filtrados
+ */
+function filterData(data, filters) {
+  if (!filters || Object.keys(filters).length === 0) {
+    return data;
+  }
+  
+  // Convertir todas las claves a números
+  const normalizedFilters = {};
+  Object.keys(filters).forEach(key => {
+    const numKey = parseInt(key);
+    if (!isNaN(numKey) && filters[key] && filters[key] !== 'TODOS') {
+      // Normalizar el valor del filtro
+      normalizedFilters[numKey] = String(filters[key]).trim();
+    }
+  });
+  
+  Logger.log('Filtros normalizados a aplicar: ' + JSON.stringify(normalizedFilters));
+  
+  let firstMismatchLogged = false;
+  
+  const result = data.filter(row => {
+    const passes = Object.entries(normalizedFilters).every(([colIdx, filterValue]) => {
+      const cellValue = String(row[colIdx] || '').trim();
+      const match = cellValue === filterValue;
+      
+      // Debug del primer filtro fallido
+      if (!match && !firstMismatchLogged) {
+        Logger.log('Primera NO coincidencia:');
+        Logger.log('  Columna: ' + colIdx);
+        Logger.log('  Valor en celda: "' + cellValue + '"');
+        Logger.log('  Valor buscado: "' + filterValue + '"');
+        firstMismatchLogged = true;
+      }
+      
+      return match;
+    });
+    
+    return passes;
+  });
+  
+  Logger.log('Resultado: ' + result.length + ' de ' + data.length + ' filas');
+  
+  return result;
+}
+
+/**
+ * Prepara el dataset completo para el frontend
+ * @returns {Object} Estructura completa de datos
+ */
+function prepareDataForFrontend() {
+  const rawData = getAllData();
+  const filterHeaders = getFilterHeaders();
+  const uniqueValues = getUniqueFilterValues(rawData.data);
+  
+  return {
+    filterHeaders: filterHeaders,
+    uniqueFilterValues: uniqueValues,
+    totalRows: rawData.data.length
+  };
+}
