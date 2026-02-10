@@ -1,0 +1,1324 @@
+<script>
+  // ============================================
+  // ESTADO GLOBAL
+  // ============================================
+   const AppState = {
+    filterHeaders: [],
+    uniqueFilterValues: {},
+    currentFilters: {},
+    totalRows: 0,
+    isLoading: false,
+    chart: null,
+    sankeyChart: null,
+    multiSelectInstances: {},
+    sankeyResizeHandler: null  // AGREGAR ESTA LÍNEA
+  };
+
+  // ============================================
+  // INICIALIZACIÓN
+  // ============================================
+  document.addEventListener('DOMContentLoaded', init);
+
+   function init() {
+    setupEventListeners();
+    setupStorytellingNavigation(); // AGREGAR ESTA LÍNEA
+    loadInitialData();
+  }
+
+
+  function setupEventListeners() {
+    // Header actions
+    document.getElementById('btnRefresh')?.addEventListener('click', () => {
+      clearAllFilters();
+      loadInitialData();
+    });
+
+    document.getElementById('btnClearAll')?.addEventListener('click', clearAllFilters);
+
+    // Cerrar dropdowns al hacer click fuera
+    document.addEventListener('click', (e) => {
+      if (!e.target.closest('.multiselect-wrapper')) {
+        closeAllDropdowns();
+      }
+    });
+  }
+
+  // ============================================
+  // CARGA DE DATOS INICIALES
+  // ============================================
+  function loadInitialData() {
+    showLoading('filtersContainer', 'Cargando filtros...');
+    showLoading('bubbleChart', 'Inicializando gráfica...');
+    
+    google.script.run
+      .withSuccessHandler(onInitialDataLoaded)
+      .withFailureHandler(onError)
+      .getInitialData();
+  }
+
+  function onInitialDataLoaded(response) {
+    if (response.error) {
+      showError('filtersContainer', response.error);
+      showError('bubbleChart', response.error);
+      return;
+    }
+
+    AppState.filterHeaders = response.filterHeaders;
+    AppState.uniqueFilterValues = response.uniqueFilterValues;
+    AppState.totalRows = response.totalRows;
+
+    renderAdvancedFilters();
+    applyFilters(); // Carga inicial de gráfica
+  }
+
+  // ============================================
+  // RENDERIZADO DE FILTROS AVANZADOS
+  // ============================================
+  function renderAdvancedFilters() {
+    const container = document.getElementById('filtersContainer');
+    container.innerHTML = '';
+
+    AppState.filterHeaders.forEach((header, index) => {
+      const filterGroup = createMultiSelectFilter(header, index);
+      container.appendChild(filterGroup);
+    });
+  }
+
+  function createMultiSelectFilter(headerName, columnIndex) {
+    const group = document.createElement('div');
+    group.className = 'filter-group-advanced';
+
+    const label = document.createElement('label');
+    label.className = 'filter-label';
+    label.textContent = headerName || `Columna ${String.fromCharCode(65 + columnIndex)}`;
+
+    const multiSelectWrapper = document.createElement('div');
+    multiSelectWrapper.className = 'multiselect-wrapper';
+    multiSelectWrapper.dataset.columnIndex = columnIndex;
+
+    // Trigger
+    const trigger = document.createElement('div');
+    trigger.className = 'multiselect-trigger';
+    trigger.innerHTML = `
+      <span class="multiselect-placeholder">Seleccionar...</span>
+      <i class="fas fa-chevron-down multiselect-icon"></i>
+    `;
+
+    // Dropdown
+    const dropdown = document.createElement('div');
+    dropdown.className = 'multiselect-dropdown';
+
+    // Search
+    const searchBox = document.createElement('div');
+    searchBox.className = 'multiselect-search';
+    searchBox.innerHTML = '<input type="text" placeholder="Buscar...">';
+
+    // Select All
+    const selectAll = document.createElement('div');
+    selectAll.className = 'multiselect-select-all multiselect-option';
+    selectAll.innerHTML = `
+      <input type="checkbox" id="selectAll_${columnIndex}">
+      <label class="multiselect-option-label">Seleccionar todos</label>
+    `;
+
+    // Options
+    const optionsContainer = document.createElement('div');
+    optionsContainer.className = 'multiselect-options';
+
+    const uniqueValues = AppState.uniqueFilterValues[columnIndex] || [];
+    uniqueValues.forEach(value => {
+      const option = document.createElement('div');
+      option.className = 'multiselect-option';
+      option.innerHTML = `
+        <input type="checkbox" value="${value}" id="opt_${columnIndex}_${value.replace(/\s/g, '_')}">
+        <label class="multiselect-option-label">${value}</label>
+      `;
+      optionsContainer.appendChild(option);
+    });
+
+    dropdown.appendChild(searchBox);
+    dropdown.appendChild(selectAll);
+    dropdown.appendChild(optionsContainer);
+
+    multiSelectWrapper.appendChild(trigger);
+    multiSelectWrapper.appendChild(dropdown);
+
+    group.appendChild(label);
+    group.appendChild(multiSelectWrapper);
+
+    // Event Listeners
+    setupMultiSelectEvents(multiSelectWrapper, columnIndex);
+
+    return group;
+  }
+
+  function setupMultiSelectEvents(wrapper, columnIndex) {
+    const trigger = wrapper.querySelector('.multiselect-trigger');
+    const dropdown = wrapper.querySelector('.multiselect-dropdown');
+    const searchInput = wrapper.querySelector('.multiselect-search input');
+    const selectAllCheckbox = wrapper.querySelector(`#selectAll_${columnIndex}`);
+    const options = wrapper.querySelectorAll('.multiselect-option:not(.multiselect-select-all)');
+
+    // Toggle dropdown
+    trigger.addEventListener('click', (e) => {
+      e.stopPropagation();
+      closeAllDropdowns();
+      dropdown.classList.toggle('show');
+      trigger.classList.toggle('active');
+    });
+
+    // Search
+    searchInput.addEventListener('input', (e) => {
+      const searchTerm = e.target.value.toLowerCase();
+      options.forEach(option => {
+        const label = option.querySelector('.multiselect-option-label').textContent.toLowerCase();
+        option.style.display = label.includes(searchTerm) ? 'flex' : 'none';
+      });
+    });
+
+    // Select All
+    selectAllCheckbox.addEventListener('change', (e) => {
+      const checkboxes = wrapper.querySelectorAll('.multiselect-options input[type="checkbox"]');
+      checkboxes.forEach(cb => {
+        if (cb.closest('.multiselect-option').style.display !== 'none') {
+          cb.checked = e.target.checked;
+        }
+      });
+      updateMultiSelectTrigger(wrapper, columnIndex);
+      applyFilters();
+    });
+
+    // Individual options
+    options.forEach(option => {
+      const checkbox = option.querySelector('input[type="checkbox"]');
+      checkbox.addEventListener('change', () => {
+        updateMultiSelectTrigger(wrapper, columnIndex);
+        applyFilters();
+      });
+    });
+  }
+
+  function updateMultiSelectTrigger(wrapper, columnIndex) {
+    const trigger = wrapper.querySelector('.multiselect-trigger');
+    const checkboxes = wrapper.querySelectorAll('.multiselect-options input[type="checkbox"]:checked');
+    const count = checkboxes.length;
+
+    if (count === 0) {
+      trigger.innerHTML = `
+        <span class="multiselect-placeholder">Seleccionar...</span>
+        <i class="fas fa-chevron-down multiselect-icon"></i>
+      `;
+    } else {
+      trigger.innerHTML = `
+        <span>${count} seleccionado${count > 1 ? 's' : ''}</span>
+        <span class="multiselect-count">${count}</span>
+        <i class="fas fa-chevron-down multiselect-icon"></i>
+      `;
+    }
+
+    updateActiveFiltersChips();
+  }
+
+  function closeAllDropdowns() {
+    document.querySelectorAll('.multiselect-dropdown.show').forEach(dropdown => {
+      dropdown.classList.remove('show');
+      dropdown.closest('.multiselect-wrapper').querySelector('.multiselect-trigger').classList.remove('active');
+    });
+  }
+
+  // ============================================
+  // CHIPS DE FILTROS ACTIVOS
+  // ============================================
+  function updateActiveFiltersChips() {
+    const container = document.getElementById('activeFiltersChips');
+    container.innerHTML = '';
+
+    const filters = collectFilters();
+    
+    Object.entries(filters).forEach(([colIdx, values]) => {
+      const headerName = AppState.filterHeaders[colIdx] || `Columna ${String.fromCharCode(65 + parseInt(colIdx))}`;
+      
+      values.forEach(value => {
+        const chip = document.createElement('div');
+        chip.className = 'filter-chip';
+        chip.innerHTML = `
+          <span>${headerName}: ${value}</span>
+          <i class="fas fa-times" data-col="${colIdx}" data-value="${value}"></i>
+        `;
+        
+        chip.querySelector('i').addEventListener('click', (e) => {
+          removeFilterValue(e.target.dataset.col, e.target.dataset.value);
+        });
+        
+        container.appendChild(chip);
+      });
+    });
+  }
+
+  function removeFilterValue(columnIndex, value) {
+    const wrapper = document.querySelector(`.multiselect-wrapper[data-column-index="${columnIndex}"]`);
+    const checkbox = wrapper.querySelector(`input[value="${value}"]`);
+    if (checkbox) {
+      checkbox.checked = false;
+      updateMultiSelectTrigger(wrapper, columnIndex);
+      applyFilters();
+    }
+  }
+
+  // ============================================
+  // APLICAR FILTROS
+  // ============================================
+  function applyFilters() {
+    if (AppState.isLoading) return;
+    AppState.isLoading = true;
+
+    const filters = collectFilters();
+    AppState.currentFilters = filters;
+
+    console.log('Filtros a enviar:', filters);
+
+    showLoading('bubbleChart', 'Actualizando gráfica...');
+
+    google.script.run
+      .withSuccessHandler(onChartDataLoaded)
+      .withFailureHandler(onChartError)
+      .getChartBubbleData(convertFiltersForBackend(filters));
+  }
+
+  function collectFilters() {
+    const filters = {};
+    
+    document.querySelectorAll('.multiselect-wrapper').forEach(wrapper => {
+      const columnIndex = wrapper.dataset.columnIndex;
+      const checkedBoxes = wrapper.querySelectorAll('.multiselect-options input[type="checkbox"]:checked');
+      
+      if (checkedBoxes.length > 0) {
+        filters[columnIndex] = Array.from(checkedBoxes).map(cb => cb.value);
+      }
+    });
+
+    return filters;
+  }
+
+  function convertFiltersForBackend(filters) {
+    // El backend espera un solo valor por columna, así que enviamos el filtrado como OR
+    // Si hay múltiples valores, procesamos en el frontend después
+    const backendFilters = {};
+    
+    Object.entries(filters).forEach(([colIdx, values]) => {
+      if (values.length === 1) {
+        backendFilters[colIdx] = values[0];
+      }
+      // Si hay múltiples valores, no enviamos filtro al backend y filtramos en frontend
+    });
+
+    return backendFilters;
+  }
+
+  function clearAllFilters() {
+    document.querySelectorAll('.multiselect-options input[type="checkbox"]').forEach(cb => {
+      cb.checked = false;
+    });
+    
+    document.querySelectorAll('.multiselect-wrapper').forEach(wrapper => {
+      const columnIndex = wrapper.dataset.columnIndex;
+      updateMultiSelectTrigger(wrapper, columnIndex);
+    });
+
+    updateActiveFiltersChips();
+    applyFilters();
+  }
+
+  // ============================================
+  // MANEJO DE RESPUESTA - GRÁFICA
+  // ============================================
+  function onChartDataLoaded(response) {
+    AppState.isLoading = false;
+
+    console.log('Respuesta recibida del backend:', response);
+
+    if (response.error) {
+      showError('bubbleChart', response.error);
+      return;
+    }
+
+    // Aplicar filtrado múltiple en frontend
+    const filteredResponse = applyMultipleFiltersToData(response);
+
+    console.log('Datos después de filtrado múltiple:', filteredResponse);
+
+    updateKPIs(filteredResponse);
+    updateChartCounts(filteredResponse.stats);
+    renderBubbleChart(filteredResponse.dataLocal, filteredResponse.dataForanea);
+    loadSankeyData();
+  }
+
+  function applyMultipleFiltersToData(response) {
+    const filters = collectFilters();
+    let dataLocal = response.dataLocal;
+    let dataForanea = response.dataForanea;
+
+    // Aplicar filtros OR para cada columna
+    Object.entries(filters).forEach(([colIdx, values]) => {
+      if (values.length > 1) {
+        // Filtrar por múltiples valores (OR dentro de la misma columna)
+        dataLocal = dataLocal.filter(point => {
+          // point[4] es el tipo, pero necesitamos acceder a los datos originales
+          // Por ahora, esto funcionará solo con el filtro de tipo (columna J)
+          return values.includes(point[4]) || values.length === 0;
+        });
+        
+        dataForanea = dataForanea.filter(point => {
+          return values.includes(point[4]) || values.length === 0;
+        });
+      }
+    });
+
+    return {
+      dataLocal: dataLocal,
+      dataForanea: dataForanea,
+      stats: calculateStats(dataLocal, dataForanea)
+    };
+  }
+
+  function calculateStats(dataLocal, dataForanea) {
+    const allData = [...dataLocal, ...dataForanea];
+    
+    if (allData.length === 0) {
+      return {
+        totalTiendas: 0,
+        totalLocal: 0,
+        totalForanea: 0,
+        totalVentas: 0,
+        totalInventario: 0,
+        promedioOcupacion: 0
+      };
+    }
+
+    const totalVentas = allData.reduce((sum, d) => sum + d[0], 0) * 1000; // Reconvertir a valores reales
+    const totalInventario = allData.reduce((sum, d) => sum + d[1], 0) * 1000;
+    const promedioOcupacion = allData.reduce((sum, d) => sum + d[2], 0) / allData.length;
+
+    return {
+      totalTiendas: allData.length,
+      totalLocal: dataLocal.length,
+      totalForanea: dataForanea.length,
+      totalVentas: totalVentas,
+      totalInventario: totalInventario,
+      promedioOcupacion: promedioOcupacion
+    };
+  }
+
+  function onChartError(error) {
+    AppState.isLoading = false;
+    console.error('Error gráfica:', error);
+    showError('bubbleChart', 'Error al cargar la gráfica. Por favor intenta nuevamente.');
+  }
+
+  
+  // ============================================
+  // RENDERIZADO DE SANKEY - REBALANCEO
+  // ============================================
+  function loadSankeyData() {
+    const filters = collectFilters();
+    
+    google.script.run
+      .withSuccessHandler(onSankeyDataLoaded)
+      .withFailureHandler(onSankeyError)
+      .getSankeyRebalanceoData(convertFiltersForBackend(filters));
+  }
+
+  function onSankeyDataLoaded(response) {
+    console.log('Datos Sankey recibidos:', response);
+
+    if (response.error) {
+      showError('sankeyChart', response.error);
+      return;
+    }
+
+    updateSankeyStats(response.stats);
+    renderSankeyChart(response.nodes, response.links);
+  }
+
+  function onSankeyError(error) {
+    console.error('Error Sankey:', error);
+    showError('sankeyChart', 'Error al cargar el diagrama de rebalanceo');
+  }
+
+ function updateSankeyStats(stats) {
+    // CORRECCIÓN: Validar que stats existe y tiene las propiedades
+    if (!stats || typeof stats !== 'object') {
+      console.warn('Stats de Sankey inválido:', stats);
+      stats = {
+        totalExcedente: 0,
+        totalDeficit: 0,
+        diferencia: 0
+      };
+    }
+
+    const totalExcedente = (stats.totalExcedente !== undefined && stats.totalExcedente !== null) 
+      ? stats.totalExcedente 
+      : 0;
+    const totalDeficit = (stats.totalDeficit !== undefined && stats.totalDeficit !== null) 
+      ? stats.totalDeficit 
+      : 0;
+    const diferencia = (stats.diferencia !== undefined && stats.diferencia !== null) 
+      ? stats.diferencia 
+      : (totalExcedente - totalDeficit);
+
+    // Actualizar valores
+    const excedentaEl = document.getElementById('totalExcedente');
+    const deficitEl = document.getElementById('totalDeficit');
+    const balanceEl = document.getElementById('balanceRebalanceo');
+
+    if (excedentaEl) excedentaEl.textContent = formatCurrency(totalExcedente);
+    if (deficitEl) deficitEl.textContent = formatCurrency(totalDeficit);
+    if (balanceEl) {
+      balanceEl.textContent = formatCurrency(Math.abs(diferencia));
+      
+      // Cambiar color según balance
+      const balanceItem = balanceEl.closest('.sankey-stat-hero');
+      if (balanceItem) {
+        if (diferencia > 0) {
+          balanceItem.style.borderLeftColor = '#18C6B8';
+        } else if (diferencia < 0) {
+          balanceItem.style.borderLeftColor = '#F39A5B';
+        } else {
+          balanceItem.style.borderLeftColor = '#4A77B5';
+        }
+      }
+    }
+  }
+
+  
+// ============================================
+  // RENDERIZADO DE SANKEY - REBALANCEO (CORREGIDO)
+  // ============================================
+  function renderSankeyChart(nodes, links) {
+    const container = document.getElementById('sankeyChart');
+
+    if (!container) {
+      console.error('Container sankeyChart no encontrado');
+      return;
+    }
+
+    // CORRECCIÓN 1: Destruir gráfica de forma segura
+    if (AppState.sankeyChart) {
+      try {
+        // Verificar que la instancia exista y esté conectada al DOM
+        if (AppState.sankeyChart.getDom && AppState.sankeyChart.getDom()) {
+          AppState.sankeyChart.dispose();
+          console.log('Sankey anterior destruido correctamente');
+        }
+      } catch (e) {
+        console.warn('Advertencia al limpiar Sankey:', e);
+      } finally {
+        AppState.sankeyChart = null;
+      }
+    }
+
+    // Limpiar contenedor de forma segura
+    try {
+      container.innerHTML = '';
+    } catch (e) {
+      console.warn('Error al limpiar container:', e);
+    }
+
+    // CORRECCIÓN 2: Validar datos antes de continuar
+    if (!nodes || !Array.isArray(nodes) || nodes.length === 0) {
+      container.innerHTML = '<div style="padding: 80px 20px; text-align: center; color: var(--text-tertiary); font-family: Inter;">No hay datos de rebalanceo disponibles</div>';
+      return;
+    }
+
+    if (!links || !Array.isArray(links) || links.length === 0) {
+      container.innerHTML = '<div style="padding: 80px 20px; text-align: center; color: var(--text-tertiary); font-family: Inter;">No hay flujos de rebalanceo para mostrar</div>';
+      return;
+    }
+
+    console.log('Renderizando Sankey con:', nodes.length, 'nodos y', links.length, 'enlaces');
+
+    // Inicializar nueva instancia
+    try {
+      AppState.sankeyChart = echarts.init(container);
+    } catch (e) {
+      console.error('Error al inicializar ECharts Sankey:', e);
+      container.innerHTML = '<div style="padding: 40px; text-align: center; color: var(--naranja-medio);">Error al inicializar la gráfica</div>';
+      return;
+    }
+
+    const option = {
+      backgroundColor: '#FFFFFF',
+      tooltip: {
+        trigger: 'item',
+        triggerOn: 'mousemove',
+        backgroundColor: 'rgba(255, 255, 255, 0.98)',
+        borderColor: '#E5E7EB',
+        borderWidth: 1,
+        padding: [14, 18],
+        textStyle: {
+          color: '#1F2937',
+          fontFamily: 'Inter, Montserrat',
+          fontSize: 12
+        },
+        // CORRECCIÓN 3: Formatter con validaciones completas
+        formatter: function(params) {
+          try {
+            if (!params || !params.dataType) {
+              return '';
+            }
+
+            if (params.dataType === 'node') {
+              const nombre = params.name || 'Sin nombre';
+              const tipoNodo = nombre.includes('Excedente') ? 'Envía' : 
+                              nombre.includes('Déficit') ? 'Recibe' : 
+                              'Centraliza';
+              const color = nombre.includes('Excedente') ? '#18C6B8' : 
+                           nombre.includes('Déficit') ? '#F39A5B' : 
+                           '#4A77B5';
+              
+              // CORRECCIÓN: Validar que params.value existe y es número
+              const valor = (params.value !== undefined && params.value !== null && typeof params.value === 'number') 
+                ? params.value 
+                : 0;
+              
+              let html = '<div style="max-width: 260px;">' +
+                     '<div style="font-weight: 600; margin-bottom: 8px; color: ' + color + '; font-size: 13px; border-bottom: 1px solid #E5E7EB; padding-bottom: 6px;">' + 
+                     nombre + '</div>' +
+                     '<div style="margin-top: 6px;"><span style="color: #6B7280; font-size: 11px;">Tipo:</span> <strong>' + tipoNodo + '</strong></div>';
+              
+              if (valor > 0) {
+                html += '<div style="margin-top: 4px;"><span style="color: #6B7280; font-size: 11px;">Monto:</span> <strong style="color: ' + color + '; font-size: 14px;">$' + Math.round(valor).toLocaleString('es-MX') + '</strong></div>';
+              }
+              
+              html += '</div>';
+              return html;
+
+            } else if (params.dataType === 'edge') {
+              // CORRECCIÓN: Validar params.data y params.value
+              const sourceName = (params.data && params.data.source) ? params.data.source : 'Origen';
+              const targetName = (params.data && params.data.target) ? params.data.target : 'Destino';
+              const valor = (params.value !== undefined && params.value !== null && typeof params.value === 'number') 
+                ? params.value 
+                : 0;
+              
+              return '<div style="max-width: 240px;">' +
+                     '<div style="font-weight: 600; margin-bottom: 8px; color: #4A77B5; font-size: 12px;">Flujo de Transferencia</div>' +
+                     '<div style="margin: 6px 0;"><span style="color: #6B7280; font-size: 11px;">Desde:</span><br><strong style="font-size: 11px;">' + sourceName + '</strong></div>' +
+                     '<div style="margin: 6px 0;"><span style="color: #6B7280; font-size: 11px;">Hacia:</span><br><strong style="font-size: 11px;">' + targetName + '</strong></div>' +
+                     '<div style="margin-top: 8px; padding-top: 8px; border-top: 1px solid #E5E7EB;"><span style="color: #6B7280; font-size: 11px;">Monto a transferir:</span><br><strong style="color: #4A77B5; font-size: 16px;">$' + Math.round(valor).toLocaleString('es-MX') + '</strong></div>' +
+                     '</div>';
+            }
+            
+            return '';
+          } catch (err) {
+            console.error('Error en formatter tooltip Sankey:', err);
+            return 'Error al mostrar información';
+          }
+        }
+      },
+      series: [
+        {
+          type: 'sankey',
+          layout: 'none',
+          emphasis: {
+            focus: 'adjacency'
+          },
+          nodeAlign: 'justify',
+          nodeGap: 12,
+          nodeWidth: 20,
+          layoutIterations: 0,
+          orient: 'horizontal',
+          draggable: false,
+          // CORRECCIÓN 4: Mapear nodos con validaciones
+          data: nodes.map((node, index) => {
+            try {
+              const nodeName = node.name || `Nodo ${index}`;
+              const nodeColor = (node.itemStyle && node.itemStyle.color) ? node.itemStyle.color : '#D9D9D9';
+              
+              return {
+                name: nodeName,
+                value: (node.value !== undefined && node.value !== null) ? node.value : undefined,
+                itemStyle: {
+                  color: nodeColor,
+                  borderColor: '#FFFFFF',
+                  borderWidth: 2,
+                  shadowBlur: 8,
+                  shadowColor: nodeColor === '#18C6B8' ? 'rgba(24, 198, 184, 0.3)' :
+                              nodeColor === '#F39A5B' ? 'rgba(243, 154, 91, 0.3)' :
+                              'rgba(217, 217, 217, 0.3)',
+                  shadowOffsetY: 3
+                },
+                label: {
+                  color: '#1F2937',
+                  fontFamily: 'Inter, Montserrat',
+                  fontSize: 11,
+                  fontWeight: 500,
+                  formatter: function(params) {
+                    try {
+                      const nombre = params.name || '';
+                      const nombreLimpio = nombre.replace(' (Excedente)', '').replace(' (Déficit)', '');
+                      return nombreLimpio.length > 18 ? nombreLimpio.substring(0, 15) + '...' : nombreLimpio;
+                    } catch (e) {
+                      return params.name || '';
+                    }
+                  }
+                },
+                emphasis: {
+                  label: {
+                    fontSize: 12,
+                    fontWeight: 600
+                  }
+                }
+              };
+            } catch (err) {
+              console.error('Error al mapear nodo:', err, node);
+              return {
+                name: `Error ${index}`,
+                itemStyle: { color: '#D9D9D9' }
+              };
+            }
+          }),
+          // CORRECCIÓN 5: Mapear links con validaciones
+          links: links.map((link, index) => {
+            try {
+              const sourceIndex = (link.source !== undefined && link.source !== null) ? link.source : 0;
+              const targetIndex = (link.target !== undefined && link.target !== null) ? link.target : 0;
+              const linkValue = (link.value !== undefined && link.value !== null && typeof link.value === 'number') 
+                ? link.value 
+                : 1;
+
+              // Validar que los índices existan en el array de nodos
+              const sourceName = (nodes[sourceIndex] && nodes[sourceIndex].name) 
+                ? nodes[sourceIndex].name 
+                : `Nodo ${sourceIndex}`;
+              const targetName = (nodes[targetIndex] && nodes[targetIndex].name) 
+                ? nodes[targetIndex].name 
+                : `Nodo ${targetIndex}`;
+
+              return {
+                source: sourceName,
+                target: targetName,
+                value: linkValue,
+                lineStyle: {
+                  color: 'source',
+                  opacity: 0.3,
+                  curveness: 0.5
+                },
+                emphasis: {
+                  lineStyle: {
+                    opacity: 0.6
+                  }
+                }
+              };
+            } catch (err) {
+              console.error('Error al mapear link:', err, link);
+              return {
+                source: 0,
+                target: 0,
+                value: 1
+              };
+            }
+          }),
+          lineStyle: {
+            curveness: 0.5
+          }
+        }
+      ]
+    };
+
+    try {
+      AppState.sankeyChart.setOption(option, true);
+      console.log('✅ Sankey renderizado exitosamente');
+    } catch (error) {
+      console.error('❌ Error al aplicar setOption en Sankey:', error);
+      container.innerHTML = '<div style="padding: 40px; text-align: center; color: var(--naranja-medio);">Error al renderizar el diagrama: ' + error.message + '</div>';
+      return;
+    }
+
+    // Responsivo - Limpiar listeners previos
+    const resizeHandler = function() {
+      if (AppState.sankeyChart && AppState.sankeyChart.getDom && AppState.sankeyChart.getDom()) {
+        try {
+          AppState.sankeyChart.resize();
+        } catch (e) {
+          console.warn('Error en resize Sankey:', e);
+        }
+      }
+    };
+    
+    // Remover listener anterior si existe
+    if (AppState.sankeyResizeHandler) {
+      window.removeEventListener('resize', AppState.sankeyResizeHandler);
+    }
+    
+    AppState.sankeyResizeHandler = resizeHandler;
+    window.addEventListener('resize', resizeHandler);
+  }
+
+
+
+
+  
+  
+  // ============================================
+  // ACTUALIZAR KPIs
+  // ============================================
+  
+  
+  
+  function updateKPIs(data) {
+    const stats = data.stats;
+
+    document.getElementById('kpiTiendas').textContent = stats.totalTiendas;
+    document.getElementById('kpiVentas').textContent = formatCurrency(stats.totalVentas);
+    document.getElementById('kpiInventario').textContent = formatCurrency(stats.totalInventario);
+    document.getElementById('kpiOcupacion').textContent = stats.promedioOcupacion.toFixed(1) + '%';
+  }
+
+  function updateChartCounts(stats) {
+    document.getElementById('countLocal').textContent = stats.totalLocal;
+    document.getElementById('countForanea').textContent = stats.totalForanea;
+  }
+
+  function formatCurrency(value) {
+    return '$' + Math.round(value).toLocaleString('es-MX');
+  }
+
+  // ============================================
+  // RENDERIZADO DE GRÁFICA ECHARTS
+  // ============================================
+
+
+// ============================================
+  // RENDERIZADO DE GRÁFICA ECHARTS - STORYTELLING EJECUTIVO
+  // ============================================
+  function renderBubbleChart(dataLocal, dataForanea) {
+    const container = document.getElementById('bubbleChart');
+
+    // Destruir gráfica anterior
+    if (AppState.chart) {
+      try {
+        AppState.chart.dispose();
+      } catch (e) {
+        console.warn('Advertencia al limpiar gráfica anterior:', e);
+      }
+      AppState.chart = null;
+    }
+
+    container.innerHTML = '';
+
+    console.log('=== RENDERIZANDO GRÁFICA STORYTELLING ===');
+    console.log('dataLocal length:', dataLocal.length);
+    console.log('dataForanea length:', dataForanea.length);
+
+    if (dataLocal.length === 0 && dataForanea.length === 0) {
+      container.innerHTML = '<div style="padding: 80px 20px; text-align: center; color: var(--text-tertiary); font-family: Inter;">No hay datos para mostrar con los filtros seleccionados</div>';
+      return;
+    }
+
+    // VALIDAR Y LIMPIAR DATOS
+    const cleanData = (data) => {
+      return data.filter((point) => {
+        const [ventas, inventario, tamanio] = point;
+        return (
+          typeof ventas === 'number' && isFinite(ventas) &&
+          typeof inventario === 'number' && isFinite(inventario) &&
+          typeof tamanio === 'number' && isFinite(tamanio) &&
+          ventas > 0 && inventario > 0 && tamanio > 0
+        );
+      });
+    };
+
+    const cleanedLocal = cleanData(dataLocal);
+    const cleanedForanea = cleanData(dataForanea);
+
+    if (cleanedLocal.length === 0 && cleanedForanea.length === 0) {
+      container.innerHTML = '<div style="padding: 80px 20px; text-align: center; color: var(--text-tertiary);">No hay datos válidos para mostrar</div>';
+      return;
+    }
+
+    AppState.chart = echarts.init(container);
+
+    // CALCULAR PROMEDIOS PARA LÍNEAS DE REFERENCIA
+    const allData = [...cleanedLocal, ...cleanedForanea];
+    const ventasValues = allData.map(d => d[0]);
+    const inventarioValues = allData.map(d => d[1]);
+    
+    const promedioVentas = ventasValues.reduce((a, b) => a + b, 0) / ventasValues.length;
+    const promedioInventario = inventarioValues.reduce((a, b) => a + b, 0) / inventarioValues.length;
+    
+    const minVentas = Math.min(...ventasValues);
+    const maxVentas = Math.max(...ventasValues);
+    const minInventario = Math.min(...inventarioValues);
+    const maxInventario = Math.max(...inventarioValues);
+    
+    const ventasMargin = Math.max((maxVentas - minVentas) * 0.15, 100);
+    const inventarioMargin = Math.max((maxInventario - minInventario) * 0.15, 100);
+
+    console.log('Promedios:', { promedioVentas, promedioInventario });
+
+    const option = {
+      backgroundColor: '#FFFFFF',
+      grid: {
+        left: '8%',
+        right: '5%',
+        bottom: '12%',
+        top: '8%',
+        containLabel: true
+      },
+      tooltip: {
+        showDelay: 0,
+        backgroundColor: 'rgba(255, 255, 255, 0.98)',
+        borderColor: '#E5E7EB',
+        borderWidth: 1,
+        padding: [14, 18],
+        textStyle: {
+          color: '#1F2937',
+          fontFamily: 'Inter, Montserrat',
+          fontSize: 12
+        },
+        formatter: function (params) {
+          const ventas = params.data[0] * 1000;
+          const inventario = params.data[1] * 1000;
+          const ocupacion = params.data[2];
+          
+          // Determinar cuadrante
+          let cuadrante = '';
+          let cuadranteColor = '#6B7280';
+          
+          if (params.data[0] > promedioVentas && params.data[1] > promedioInventario) {
+            cuadrante = 'Alto desempeño';
+            cuadranteColor = '#18C6B8';
+          } else if (params.data[0] < promedioVentas && params.data[1] > promedioInventario) {
+            cuadrante = 'Sobre-stock (Riesgo)';
+            cuadranteColor = '#F39A5B';
+          } else if (params.data[0] > promedioVentas && params.data[1] < promedioInventario) {
+            cuadrante = 'Sub-stock (Oportunidad)';
+            cuadranteColor = '#4A77B5';
+          } else {
+            cuadrante = 'Bajo desempeño';
+            cuadranteColor = '#9CA3AF';
+          }
+          
+          return '<div style="max-width: 280px;">' +
+                 '<div style="font-weight: 600; margin-bottom: 10px; color: #4A77B5; font-size: 13px; border-bottom: 1px solid #E5E7EB; padding-bottom: 6px;">' + params.data[3] + '</div>' +
+                 '<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 8px;">' +
+                 '<div><span style="color: #6B7280; font-size: 11px;">Ventas</span><br><strong style="color: #1F2937; font-size: 14px;">$' + Math.round(ventas).toLocaleString('es-MX') + '</strong></div>' +
+                 '<div><span style="color: #6B7280; font-size: 11px;">Inventario</span><br><strong style="color: #1F2937; font-size: 14px;">$' + Math.round(inventario).toLocaleString('es-MX') + '</strong></div>' +
+                 '</div>' +
+                 '<div style="margin-bottom: 8px;"><span style="color: #6B7280; font-size: 11px;">Ocupación:</span> <strong>' + ocupacion.toFixed(1) + '%</strong></div>' +
+                 '<div style="background: ' + cuadranteColor + '15; padding: 6px 10px; border-radius: 4px; border-left: 3px solid ' + cuadranteColor + ';">' +
+                 '<span style="color: ' + cuadranteColor + '; font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: 0.3px;">' + cuadrante + '</span>' +
+                 '</div>' +
+                 '</div>';
+        },
+        axisPointer: {
+          show: true,
+          type: 'cross',
+          lineStyle: {
+            type: 'dashed',
+            width: 1,
+            color: '#D1D5DB'
+          }
+        }
+      },
+      toolbox: {
+        feature: {
+          dataZoom: {
+            title: {
+              zoom: 'Zoom',
+              back: 'Restaurar'
+            }
+          },
+          restore: {
+            title: 'Restaurar'
+          },
+          saveAsImage: {
+            title: 'Descargar gráfica',
+            name: 'analisis_ventas_inventario',
+            pixelRatio: 2,
+            backgroundColor: '#FFFFFF'
+          }
+        },
+        right: '3%',
+        top: '2%',
+        iconStyle: {
+          borderColor: '#4A77B5'
+        },
+        emphasis: {
+          iconStyle: {
+            borderColor: '#B07CCF'
+          }
+        }
+      },
+      xAxis: {
+        type: 'value',
+        name: 'Ventas (miles $)',
+        nameLocation: 'middle',
+        nameGap: 35,
+        nameTextStyle: {
+          fontSize: 12,
+          fontWeight: 600,
+          fontFamily: 'Inter, Montserrat',
+          color: '#4A77B5'
+        },
+        min: function(value) {
+          return Math.floor(value.min - ventasMargin);
+        },
+        max: function(value) {
+          return Math.ceil(value.max + ventasMargin);
+        },
+        axisLabel: {
+          formatter: '${value}k',
+          fontFamily: 'Inter, Montserrat',
+          color: '#6B7280',
+          fontSize: 11,
+          fontWeight: 500
+        },
+        splitLine: {
+          lineStyle: {
+            type: 'solid',
+            color: '#F3F5F9',
+            width: 1
+          }
+        },
+        axisLine: {
+          lineStyle: {
+            color: '#E5E7EB',
+            width: 1
+          }
+        }
+      },
+      yAxis: {
+        type: 'value',
+        name: 'Inventario (miles $)',
+        nameLocation: 'middle',
+        nameGap: 50,
+        nameTextStyle: {
+          fontSize: 12,
+          fontWeight: 600,
+          fontFamily: 'Inter, Montserrat',
+          color: '#4A77B5'
+        },
+        min: function(value) {
+          return Math.floor(value.min - inventarioMargin);
+        },
+        max: function(value) {
+          return Math.ceil(value.max + inventarioMargin);
+        },
+        axisLabel: {
+          formatter: '${value}k',
+          fontFamily: 'Inter, Montserrat',
+          color: '#6B7280',
+          fontSize: 11,
+          fontWeight: 500
+        },
+        splitLine: {
+          lineStyle: {
+            type: 'solid',
+            color: '#F3F5F9',
+            width: 1
+          }
+        },
+        axisLine: {
+          lineStyle: {
+            color: '#E5E7EB',
+            width: 1
+          }
+        },
+        scale: true
+      },
+      series: [
+        // CUADRANTES DE FONDO (Zonas Estratégicas)
+        {
+          name: 'Zona Óptima',
+          type: 'scatter',
+          silent: true,
+          symbolSize: 0,
+          data: [],
+          markArea: {
+            silent: true,
+            itemStyle: {
+              color: 'rgba(24, 198, 184, 0.06)'
+            },
+            data: [[
+              {
+                name: 'Alto Desempeño',
+                xAxis: promedioVentas,
+                yAxis: promedioInventario
+              },
+              {
+                xAxis: 'max',
+                yAxis: 'max'
+              }
+            ]]
+          }
+        },
+        {
+          name: 'Zona Riesgo',
+          type: 'scatter',
+          silent: true,
+          symbolSize: 0,
+          data: [],
+          markArea: {
+            silent: true,
+            itemStyle: {
+              color: 'rgba(243, 154, 91, 0.04)'
+            },
+            data: [[
+              {
+                name: 'Sobre-stock',
+                xAxis: 'min',
+                yAxis: promedioInventario
+              },
+              {
+                xAxis: promedioVentas,
+                yAxis: 'max'
+              }
+            ]]
+          }
+        },
+        {
+          name: 'Zona Oportunidad',
+          type: 'scatter',
+          silent: true,
+          symbolSize: 0,
+          data: [],
+          markArea: {
+            silent: true,
+            itemStyle: {
+              color: 'rgba(74, 119, 181, 0.04)'
+            },
+            data: [[
+              {
+                name: 'Sub-stock',
+                xAxis: promedioVentas,
+                yAxis: 'min'
+              },
+              {
+                xAxis: 'max',
+                yAxis: promedioInventario
+              }
+            ]]
+          }
+        },
+        
+        // LÍNEAS DE REFERENCIA (Promedios)
+        {
+          name: 'Líneas de Referencia',
+          type: 'line',
+          markLine: {
+            silent: false,
+            symbol: 'none',
+            lineStyle: {
+              type: 'solid',
+              color: '#D9D9D9',
+              width: 2
+            },
+            label: {
+              show: true,
+              position: 'end',
+              formatter: function(params) {
+                if (params.value) {
+                  return 'Prom: $' + Math.round(params.value).toLocaleString() + 'k';
+                }
+                return '';
+              },
+              fontFamily: 'Inter, Montserrat',
+              fontSize: 10,
+              fontWeight: 600,
+              color: '#6B7280',
+              backgroundColor: '#FFFFFF',
+              padding: [4, 8],
+              borderRadius: 4,
+              borderColor: '#D9D9D9',
+              borderWidth: 1
+            },
+            data: [
+              {
+                name: 'Promedio Ventas',
+                xAxis: promedioVentas
+              },
+              {
+                name: 'Promedio Inventario',
+                yAxis: promedioInventario
+              }
+            ]
+          }
+        },
+        
+        // DATOS - TIENDAS LOCALES
+        {
+          name: 'Local',
+          type: 'scatter',
+          data: cleanedLocal,
+          symbolSize: function (data) {
+            // Tamaño más notorio basado en ocupación (2.5x para mejor visibilidad)
+            const size = Math.max(data[2] * 2.5, 18);
+            return isFinite(size) ? size : 18;
+          },
+          emphasis: {
+            focus: 'series',
+            scale: 1.3,
+            label: {
+              show: true,
+              formatter: function (param) {
+                return param.data[3];
+              },
+              position: 'top',
+              fontSize: 11,
+              fontFamily: 'Inter, Montserrat',
+              color: '#1F2937',
+              fontWeight: 700,
+              backgroundColor: 'rgba(255, 255, 255, 0.98)',
+              padding: [6, 10],
+              borderRadius: 6,
+              borderColor: '#C9A0DC',
+              borderWidth: 2,
+              shadowBlur: 8,
+              shadowColor: 'rgba(201, 160, 220, 0.3)',
+              shadowOffsetY: 2
+            }
+          },
+          itemStyle: {
+            shadowBlur: 12,
+            shadowColor: 'rgba(176, 124, 207, 0.35)',
+            shadowOffsetY: 4,
+            borderWidth: 0,
+            color: new echarts.graphic.RadialGradient(0.4, 0.3, 1, [
+              { offset: 0, color: '#C9A0DC' },
+              { offset: 1, color: '#B07CCF' }
+            ])
+          }
+        },
+        
+        // DATOS - TIENDAS FORÁNEAS
+        {
+          name: 'Foránea',
+          type: 'scatter',
+          data: cleanedForanea,
+          symbolSize: function (data) {
+            // Tamaño más notorio basado en ocupación (2.5x para mejor visibilidad)
+            const size = Math.max(data[2] * 2.5, 18);
+            return isFinite(size) ? size : 18;
+          },
+          emphasis: {
+            focus: 'series',
+            scale: 1.3,
+            label: {
+              show: true,
+              formatter: function (param) {
+                return param.data[3];
+              },
+              position: 'top',
+              fontSize: 11,
+              fontFamily: 'Inter, Montserrat',
+              color: '#1F2937',
+              fontWeight: 700,
+              backgroundColor: 'rgba(255, 255, 255, 0.98)',
+              padding: [6, 10],
+              borderRadius: 6,
+              borderColor: '#F6B48C',
+              borderWidth: 2,
+              shadowBlur: 8,
+              shadowColor: 'rgba(246, 180, 140, 0.3)',
+              shadowOffsetY: 2
+            }
+          },
+          itemStyle: {
+            shadowBlur: 12,
+            shadowColor: 'rgba(243, 154, 91, 0.35)',
+            shadowOffsetY: 4,
+            borderWidth: 0,
+            color: new echarts.graphic.RadialGradient(0.4, 0.3, 1, [
+              { offset: 0, color: '#F6B48C' },
+              { offset: 1, color: '#F39A5B' }
+            ])
+          }
+        }
+      ]
+    };
+
+    try {
+      AppState.chart.setOption(option, true);
+      console.log('✅ Gráfica de storytelling renderizada exitosamente');
+    } catch (error) {
+      console.error('❌ Error al renderizar gráfica:', error);
+    }
+
+    // Responsivo
+    const resizeHandler = function() {
+      if (AppState.chart) {
+        AppState.chart.resize();
+      }
+    };
+    
+    window.removeEventListener('resize', resizeHandler);
+    window.addEventListener('resize', resizeHandler);
+  }
+
+
+
+  // ============================================
+  // UTILIDADES UI
+  // ============================================
+  function showLoading(containerId, message) {
+    const container = document.getElementById(containerId);
+    if (container) {
+      container.innerHTML = `<div class="filter-skeleton"><i class="fas fa-spinner fa-pulse"></i> ${message}</div>`;
+    }
+  }
+
+  function showError(containerId, message) {
+    const container = document.getElementById(containerId);
+    if (container) {
+      container.innerHTML = `<div style="padding: 40px 20px; text-align: center; color: var(--naranja-medio);">⚠️ ${message}</div>`;
+    }
+  }
+
+  function onError(error) {
+    AppState.isLoading = false;
+    console.error('Error:', error);
+    showError('bubbleChart', 'Error al cargar los datos. Por favor recarga la página.');
+  }
+  // ============================================
+  // NAVEGACIÓN STORYTELLING
+  // ============================================
+  function setupStorytellingNavigation() {
+    // Botón toggle filtros
+    document.getElementById('btnToggleFilters')?.addEventListener('click', toggleFilters);
+    document.getElementById('btnCloseFilters')?.addEventListener('click', toggleFilters);
+    document.getElementById('sidebarOverlay')?.addEventListener('click', toggleFilters);
+
+    // Navegación entre secciones
+    document.getElementById('btnScrollToSankey')?.addEventListener('click', () => {
+      scrollToSection('section-rebalanceo');
+    });
+
+    document.getElementById('btnNavToSankey')?.addEventListener('click', () => {
+      scrollToSection('section-rebalanceo');
+    });
+
+    document.getElementById('btnNavToDiagnostico')?.addEventListener('click', () => {
+      scrollToSection('section-diagnostico');
+    });
+  }
+
+  function toggleFilters() {
+    const sidebar = document.getElementById('filtersSidebar');
+    const overlay = document.getElementById('sidebarOverlay');
+    
+    sidebar.classList.toggle('show');
+    overlay.classList.toggle('show');
+  }
+
+  function scrollToSection(sectionId) {
+    const section = document.getElementById(sectionId);
+    if (section) {
+      section.scrollIntoView({ 
+        behavior: 'smooth',
+        block: 'start'
+      });
+    }
+  }
+</script>
