@@ -1,0 +1,63 @@
+/**
+ * CAPA DE SERVICIO
+ * Funciones expuestas al frontend via google.script.run
+ */
+
+/**
+ * Sirve la interfaz HTML
+ */
+function doGet() {
+  const template = HtmlService.createTemplateFromFile('Index');
+  return template.evaluate()
+    .setTitle(CONFIG.APP_TITLE)
+    .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+}
+
+/**
+ * Incluye archivos HTML modulares
+ */
+function include(filename) {
+  return HtmlService.createHtmlOutputFromFile(filename).getContent();
+}
+
+/**
+ * API: Obtiene configuración inicial
+ */
+function getInitialData() {
+  try {
+    return prepareDataForFrontend();
+  } catch (error) {
+    Logger.log('Error en getInitialData: ' + error.toString());
+    return { error: error.message };
+  }
+}
+
+/**
+ * API: Obtiene datos para la gráfica de burbujas
+ * @param {Object} filters - Filtros activos
+ * @returns {Object} Datos formateados para ECharts
+ */
+function getChartBubbleData(filters) {
+  try {
+    return getChartData(filters);
+  } catch (error) {
+    Logger.log('Error en getChartBubbleData: ' + error.toString());
+    return { error: error.message };
+  }
+}
+
+
+/**
+ * API: Obtiene datos para Sankey de rebalanceo
+ * @param {Object} filters - Filtros activos
+ * @returns {Object} Datos Sankey
+ */
+function getSankeyRebalanceoData(filters) {
+  try {
+    return getSankeyData(filters);
+  } catch (error) {
+    Logger.log('Error en getSankeyRebalanceoData: ' + error.toString());
+    return { error: error.message };
+  }
+}
+
