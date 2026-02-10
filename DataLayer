@@ -1,0 +1,51 @@
+/**
+ * CAPA DE DATOS
+ * Responsable de todas las operaciones de lectura con Sheets
+ */
+
+/**
+ * Obtiene la hoja de cálculo activa
+ */
+function getSheet_() {
+  const ss = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID);
+  return ss.getSheetByName(CONFIG.SHEET_NAME);
+}
+
+/**
+ * Lee todos los datos en una sola operación (optimizado)
+ * @returns {Object} { headers: Array, data: Array[] }
+ */
+function getAllData() {
+  try {
+    const sheet = getSheet_();
+    const range = sheet.getRange(CONFIG.DATA_RANGE);
+    const values = range.getValues();
+    
+    if (values.length === 0) {
+      return { headers: [], data: [] };
+    }
+    
+    return {
+      headers: values[0],
+      data: values.slice(1) // Excluir encabezados
+    };
+  } catch (error) {
+    Logger.log('Error en getAllData: ' + error.toString());
+    throw new Error('No se pudieron cargar los datos del inventario');
+  }
+}
+
+/**
+ * Obtiene solo los encabezados de las columnas de filtro (A-K)
+ * @returns {Array} Encabezados de columnas A-K
+ */
+function getFilterHeaders() {
+  try {
+    const sheet = getSheet_();
+    const headers = sheet.getRange(CONFIG.HEADER_ROW + ':' + CONFIG.HEADER_ROW).getValues()[0];
+    return headers.slice(0, 11); // A-K son 11 columnas (índice 0-10)
+  } catch (error) {
+    Logger.log('Error en getFilterHeaders: ' + error.toString());
+    throw new Error('No se pudieron cargar los encabezados de filtros');
+  }
+}
