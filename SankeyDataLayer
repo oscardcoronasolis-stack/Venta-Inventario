@@ -1,0 +1,175 @@
+/**
+ * CAPA DE DATOS PARA SANKEY
+ * Procesa datos de rebalanceo de inventario
+ */
+
+/**
+ * Obtiene datos para el diagrama Sankey de rebalanceo
+ * @param {Object} filters - Filtros activos
+ * @returns {Object} Datos formateados para Sankey
+ */
+function getSankeyData(filters) {
+  try {
+    const rawData = getAllData();
+    const filteredData = filters && Object.keys(filters).length > 0 
+      ? filterData(rawData.data, filters)
+      : rawData.data;
+    
+    return processSankeyData(filteredData);
+  } catch (error) {
+    Logger.log('Error en getSankeyData: ' + error.toString());
+    return { error: error.message };
+  }
+}
+
+/**
+ * Procesa datos y genera estructura Sankey
+ * @param {Array[]} data - Datos filtrados
+ * @returns {Object} { nodes: [], links: [] }
+ */
+
+/**
+ * Procesa datos y genera estructura Sankey (CORREGIDO)
+ * @param {Array[]} data - Datos filtrados
+ * @returns {Object} { nodes: [], links: [] }
+ */
+function processSankeyData(data) {
+  const COL_E = 4;  // Nombre tienda
+  const COL_T = 19; // Monto rebalanceo
+  
+  const excedentes = [];
+  const deficits = [];
+  
+  // Clasificar tiendas
+  data.forEach((row, index) => {
+    try {
+      const tienda = row[COL_E] || `Tienda ${index + 1}`;
+      const montoRaw = row[COL_T];
+      
+      // CORRECCIÓN: Validar y parsear monto de forma robusta
+      let monto = 0;
+      
+      if (typeof montoRaw === 'number') {
+        monto = montoRaw;
+      } else if (typeof montoRaw === 'string') {
+        // Limpiar string y convertir
+        const cleaned = String(montoRaw).replace(/[$,]/g, '');
+        monto = parseFloat(cleaned);
+      }
+      
+      // Validar que sea un número válido
+      if (isNaN(monto) || !isFinite(monto) || monto === 0) {
+        return; // Saltar esta fila
+      }
+      
+      if (monto > 0) {
+        excedentes.push({
+          nombre: String(tienda),
+          monto: Math.abs(monto) // Asegurar positivo
+        });
+      } else {
+        deficits.push({
+          nombre: String(tienda),
+          monto: Math.abs(monto) // Convertir a positivo
+        });
+      }
+    } catch (err) {
+      Logger.log('Error procesando fila ' + index + ': ' + err.toString());
+    }
+  });
+  
+  Logger.log('Excedentes encontrados: ' + excedentes.length);
+  Logger.log('Déficits encontrados: ' + deficits.length);
+  
+  // Ordenar y tomar Top 10
+  excedentes.sort((a, b) => b.monto - a.monto);
+  deficits.sort((a, b) => b.monto - a.monto);
+  
+  const top10Excedentes = excedentes.slice(0, 10);
+  const top10Deficits = deficits.slice(0, 10);
+  
+  // CORRECCIÓN: Validar que haya datos
+  if (top10Excedentes.length === 0 && top10Deficits.length === 0) {
+    return {
+      nodes: [],
+      links: [],
+      stats: {
+        totalExcedente: 0,
+        totalDeficit: 0,
+        countExcedente: 0,
+        countDeficit: 0,
+        diferencia: 0
+      }
+    };
+  }
+  
+  // Construir nodos
+  const nodes = [];
+  
+  // Nodos de excedente (izquierda)
+  top10Excedentes.forEach(item => {
+    nodes.push({
+      name: item.nombre + ' (Excedente)',
+      value: item.monto,
+      itemStyle: { color: '#18C6B8' }
+    });
+  });
+  
+  // Nodo central (hub)
+  const hubIndex = top10Excedentes.length;
+  nodes.push({
+    name: 'Centro de Rebalanceo',
+    itemStyle: { color: '#D9D9D9' }
+  });
+  
+  // Nodos de déficit (derecha)
+  top10Deficits.forEach(item => {
+    nodes.push({
+      name: item.nombre + ' (Déficit)',
+      value: item.monto,
+      itemStyle: { color: '#F39A5B' }
+    });
+  });
+  
+  // Construir enlaces (links)
+  const links = [];
+  
+  // Enlaces: Excedentes → Hub
+  top10Excedentes.forEach((item, index) => {
+    links.push({
+      source: index,
+      target: hubIndex,
+      value: item.monto
+    });
+  });
+  
+  // Enlaces: Hub → Déficits
+  top10Deficits.forEach((item, index) => {
+    links.push({
+      source: hubIndex,
+      target: hubIndex + 1 + index,
+      value: item.monto
+    });
+  });
+  
+  // Calcular estadísticas
+  const totalExcedente = top10Excedentes.reduce((sum, item) => sum + item.monto, 0);
+  const totalDeficit = top10Deficits.reduce((sum, item) => sum + item.monto, 0);
+  
+  Logger.log('Total Excedente: ' + totalExcedente);
+  Logger.log('Total Déficit: ' + totalDeficit);
+  Logger.log('Nodos generados: ' + nodes.length);
+  Logger.log('Enlaces generados: ' + links.length);
+  
+  return {
+    nodes: nodes,
+    links: links,
+    stats: {
+      totalExcedente: totalExcedente,
+      totalDeficit: totalDeficit,
+      countExcedente: top10Excedentes.length,
+      countDeficit: top10Deficits.length,
+      diferencia: totalExcedente - totalDeficit
+    }
+  };
+}
