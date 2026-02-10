@@ -1,0 +1,22 @@
+/**
+ * CONFIGURACIÓN GLOBAL - INVENTARIO IA
+ * Modificar aquí cualquier cambio en ubicación de datos
+ */
+
+const CONFIG = {
+  // Identificadores de Google Sheets
+  SPREADSHEET_ID: '1Y8ObYluu-m9EieGbC5fd4-rosNe2AxHVmrcg6uBp93E',
+  SHEET_NAME: 'dataset',
+  
+  // Rangos de datos
+  DATA_RANGE: 'A:Y',           // Rango completo de datos
+  FILTER_COLUMNS: 'A:K',       // Columnas para filtros
+  
+  // Encabezados
+  HEADER_ROW: 1,
+  DATA_START_ROW: 2,
+  
+  // UI Configuration
+  APP_TITLE: 'Inventario IA - Análisis Visual',
+  MAX_ROWS_DISPLAY: 1000
+};
