@@ -1,0 +1,76 @@
+/**
+ * ANÁLISIS DETALLADO DE BOUTIQUES
+ */
+function analyzeBoutiquesData() {
+  const rawData = getAllData();
+  
+  // Filtrar solo Boutiques
+  const boutiques = rawData.data.filter(row => {
+    return String(row[0] || '').trim() === 'Boutiques';
+  });
+  
+  Logger.log('=== ANÁLISIS DE BOUTIQUES ===');
+  Logger.log('Total filas: ' + boutiques.length);
+  Logger.log('');
+  
+  // Analizar columnas clave
+  const COL_E = 4;  // Nombre tienda
+  const COL_J = 9;  // Tipo (Local/Foranea)
+  const COL_L = 11; // Ventas
+  const COL_M = 12; // Inventario
+  const COL_P = 15; // Tamaño (%)
+  
+  Logger.log('MUESTRA DE LAS PRIMERAS 3 BOUTIQUES:');
+  Logger.log('');
+  
+  for (let i = 0; i < Math.min(3, boutiques.length); i++) {
+    const row = boutiques[i];
+    Logger.log(`--- Boutique ${i + 1} ---`);
+    Logger.log('  E (Nombre): "' + row[COL_E] + '"');
+    Logger.log('  J (Tipo): "' + row[COL_J] + '"');
+    Logger.log('  L (Ventas): "' + row[COL_L] + '" (tipo: ' + typeof row[COL_L] + ')');
+    Logger.log('  M (Inventario): "' + row[COL_M] + '" (tipo: ' + typeof row[COL_M] + ')');
+    Logger.log('  P (Tamaño %): "' + row[COL_P] + '" (tipo: ' + typeof row[COL_P] + ')');
+    Logger.log('');
+  }
+  
+  // Contar valores de columna J
+  const tipoJ = {};
+  boutiques.forEach(row => {
+    const tipo = String(row[COL_J] || '').trim();
+    tipoJ[tipo] = (tipoJ[tipo] || 0) + 1;
+  });
+  
+  Logger.log('DISTRIBUCIÓN COLUMNA J (Tipo):');
+  Object.keys(tipoJ).forEach(tipo => {
+    Logger.log('  "' + tipo + '": ' + tipoJ[tipo] + ' tiendas');
+  });
+  Logger.log('');
+  
+  // Contar valores nulos/vacíos
+  let nullL = 0, nullM = 0, nullP = 0;
+  boutiques.forEach(row => {
+    if (!row[COL_L] || row[COL_L] === '') nullL++;
+    if (!row[COL_M] || row[COL_M] === '') nullM++;
+    if (!row[COL_P] || row[COL_P] === '') nullP++;
+  });
+  
+  Logger.log('VALORES VACÍOS/NULOS:');
+  Logger.log('  Columna L (Ventas): ' + nullL + ' vacíos');
+  Logger.log('  Columna M (Inventario): ' + nullM + ' vacíos');
+  Logger.log('  Columna P (Tamaño %): ' + nullP + ' vacíos');
+  Logger.log('');
+  
+  // Probar el procesamiento
+  Logger.log('PRUEBA DE PROCESAMIENTO:');
+  const processed = processChartData(boutiques);
+  Logger.log('  dataLocal: ' + processed.dataLocal.length + ' puntos');
+  Logger.log('  dataForanea: ' + processed.dataForanea.length + ' puntos');
+  
+  if (processed.dataLocal.length > 0) {
+    Logger.log('  Primer punto Local: ' + JSON.stringify(processed.dataLocal[0]));
+  }
+  if (processed.dataForanea.length > 0) {
+    Logger.log('  Primer punto Foránea: ' + JSON.stringify(processed.dataForanea[0]));
+  }
+}
